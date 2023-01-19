@@ -2,7 +2,7 @@ from multiprocessing.sharedctypes import Value
 from constants import EMPTY, WHITE, BLACK
 from random import choice, seed
 
-seed(42)  # Get same results temporarily
+#seed(42)  # Get same results temporarily
 
 # Note: WHITE goes left->right, BLACK goes top->bottom
 
