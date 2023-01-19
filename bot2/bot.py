@@ -1,0 +1,292 @@
+from multiprocessing.sharedctypes import Value
+from constants import EMPTY, WHITE, BLACK
+from random import choice, seed
+
+#seed(42)  # Get same results temporarily
+
+# Note: WHITE goes left->right, BLACK goes top->bottom
+
+class RandomHexBot:
+    def __init__(self, color, board_size=11):
+        self.color = color
+        self.opp = BLACK if color == WHITE else WHITE
+        self.move_count = 0
+        self.init_board(board_size)
+
+        self.pub = {
+            "init_board": self.init_board,
+            "show_board": self.show_board,
+            "make_move": self.make_move,
+            "seto": self.seto,
+            "sety": self.sety,
+            "unset": self.unset,
+            "check_win": self.check_win,
+        }
+
+        self.argnums = {
+            "init_board": 1,
+            "show_board": 0,
+            "make_move": 0,
+            "seto": 1,
+            "sety": 1,
+            "unset": 1,
+            "check_win": 0,
+        }
+
+    def is_cmd(self, cmd):
+        """Checks to see whether the command in 'cmd' conforms to the expected format
+
+        Args:
+            cmd (List[str]): A space-separated list of the commands given on the command line
+
+        Returns:
+            bool: True if the command exists and has the correct # of arguments, False otherwise
+        """
+        assert len(cmd)
+        if cmd[0] not in self.pub:
+            return False
+        if len(cmd) - 1 != self.argnums[cmd[0]]:
+            return False
+
+        return True
+
+    def run_command(self, cmd):
+        """Executes the command contained within 'cmd' if it is applicable
+
+        Args:
+            cmd (List[str]): A space-separated list of the commands given on the command line
+        """
+        if len(cmd) > 1:
+            self.pub[cmd[0]](cmd[1])
+        else:
+            self.pub[cmd[0]]()
+
+    def init_board(self, board_size):
+        """Tells the bot to reset the game to an empty board with a specified side length
+
+        Args:
+            board_size (int): The width & height of the hex game board to create
+        """
+        board_size = int(board_size)
+        self.board_size = board_size
+        self.board = [EMPTY for i in range(board_size**2)]
+        self.move_count = 0
+
+        self.init_neighbours()
+
+    def show_board(self):
+        """Prints the board to stdout. This is primarily used for
+        testing purposes & when playing against a human opponent
+
+        Returns:
+            bool: True if the command exists and ran successfully, False otherwise
+        """
+        tile_chars = {
+            EMPTY: ".",
+            BLACK: "B",
+            WHITE: "W",
+        }
+
+        chars = list(map(lambda x: tile_chars[x], self.board))
+
+        for i in reversed(range(1, self.board_size+1)):  # Reverse to avoid shifting indicies
+            chars.insert(i * self.board_size, "|")
+
+        print("".join(chars))
+        return
+
+    def make_move(self):
+        """Generates the move. For this bot, the move is randomly selected from all empty positions."""
+        empties = []
+        for i, cell in enumerate(self.board):
+            if (cell == WHITE and self.color == WHITE):
+                for j in [i+1,i-1]:
+                    if 0 <= j < len(self.board) and self.board[j] == EMPTY:
+                        empties.append(j)
+            if (cell == BLACK and self.color == BLACK):
+                for j in [i+11,i-11]:
+                    if 0 <= j < len(self.board) and self.board[j] == EMPTY:
+                        empties.append(j)
+        if empties:
+            move = self.coord_to_move(choice(empties))
+        else:
+            while True:
+                i = choice(range(len(self.board)))
+                if self.board[i] == EMPTY:
+                    move = self.coord_to_move(i)
+                    break
+        self.sety(move)
+        print(move)
+        return
+
+    def seto(self, move):
+        """Tells the bot about a move for the other bot
+
+        Args:
+            move (str): A human-readable position on which the opponent has just played
+        """
+        # TODO: Handle swap move. Logic moved to move_to_coord()
+        coord = self.move_to_coord(move)
+        if self.board[coord] == EMPTY:
+            # TODO: Warn or not?
+            #print("Trying to play on a non-empty square!")
+            self.board[coord] = self.opp
+            self.move_count += 1
+        return
+
+    def sety(self, move):
+        """Set Your [tile]. Tells the bot to play a move for itself
+
+        Args:
+            move (str): A human-readable position on the board
+        """
+        coord = self.move_to_coord(move)
+        if self.board[coord] != EMPTY:
+            #print("Trying to play on a non-empty square!")
+            return
+        self.board[coord] = self.color
+        self.move_count += 1
+        return
+
+    def unset(self, move):
+        """Tells the bot to set a tile as unused
+
+        Args:
+            move (str): A human-readable position on the board
+        Returns:
+            bool: True if the move has been unmade, False otherwise
+        """
+
+        coord = self.move_to_coord(move)
+        self.board[coord] = EMPTY
+        return True
+
+    def check_win(self):
+        """Checks whether or not the game has come to a close.
+
+        Returns:
+            int: 1 if this bot has won, -1 if the opponent has won, and 0 otherwise. Note that draws
+            are mathematically impossible in Hex.
+        """
+        seen = set()
+
+        def dfs(i, color, level=0):
+            """Oopsie poopsie! I made a fucky wucky! This code is super-duper slow! UwU7
+
+            Args:
+                i (int): The current location of the depth-first search
+                color (int): The current color of the dfs.
+            """
+            is_right_column = (i + 1) % self.board_size == 0
+            is_bottom_row = i >= self.board_size * (self.board_size - 1)
+
+            if color == WHITE and is_right_column:
+                return True
+            elif color == BLACK and is_bottom_row:
+                return True
+
+            # Label hexagon as 'visited' so we don't get infinite recusion
+            seen.add(i)
+            for neighbour in self.neighbours[i]:
+                if (
+                    neighbour not in seen
+                    and self.board[neighbour] == color
+                    and dfs(neighbour, color, level=level + 1)
+                ):
+                    return True
+
+            # Remove hexagon so we can examine it again next time (hint:is this needed?)
+            seen.remove(i)
+            return False
+
+        # Iterate over all starting spaces for black & white, performing dfs on empty
+        # spaces (hint: this leads to repeated computation!)
+        for i in range(0, self.board_size):
+            if self.board[i] == BLACK and dfs(i, BLACK):
+                print(1 if self.color == BLACK else -1)
+                return
+
+        for i in range(0, len(self.board), self.board_size):
+            if self.board[i] == WHITE and dfs(i, WHITE):
+                print(1 if self.color == WHITE else -1)
+                return
+
+        print(0)
+        return
+
+    def init_neighbours(self):
+        """Precalculates all neighbours for each cell"""
+        self.neighbours = []
+
+        offsets_normal = [-1, 1, -self.board_size, self.board_size, -self.board_size+1, self.board_size-1]
+        offsets_left   = [    1, -self.board_size, self.board_size, -self.board_size+1                   ]
+        offsets_right  = [-1,    -self.board_size, self.board_size,                     self.board_size-1]
+
+        def legalize_offsets(cell, offsets):
+            a = []
+            for offset in offsets:
+                if 0 <= cell + offset < self.board_size**2:
+                    a.append(cell + offset)
+            return a
+
+        for cell in range(self.board_size**2):
+            if (cell+1) % self.board_size == 0:
+                offsets = offsets_right
+            elif cell % self.board_size == 0:
+                offsets = offsets_left
+            else:
+                offsets = offsets_normal
+
+            self.neighbours.append(legalize_offsets(cell, offsets))
+        return
+
+    def coord_to_move(self, coord):
+        """Converts an integer coordinate to a human-readable move
+
+        Args:
+            coord (int): A coordinate within self.board
+
+        Returns:
+            str: A human-readable version of coord
+        Example:
+            >>> assert coord_to_move(0) == "a1"
+            >>> assert coord_to_move(self.board_size + 2) == "b3"
+            >>> assert coord_to_move(22 * self.board_size + 11) == "w12"
+        """
+        letter = chr(coord // self.board_size + ord("a"))
+        number = coord % self.board_size + 1
+
+        return f'{letter}{number}'
+
+    def move_to_coord(self, move):
+        """Converts a human-readable move to a coordinate within self.board
+
+        Args:
+            move (str): A human-readable position on the board
+
+        Returns:
+            int: The integer coordinate of 'move', used to interact with the board
+
+        Example:
+            >>> assert move_to_coord("a1") == 0
+            >>> assert move_to_coord("b3") == self.board_size + 2
+            >>> assert move_to_coord("w12") == 22 * self.board_size + 11
+        """
+        # TODO: Handle swap move
+        if move == "swap":
+            self.swap_move()
+            return
+
+        assert len(move) >= 2, "Move must be a character-digit pair. Ex: a12"
+        assert move[0].isalpha(), "First character must be a letter. Ex: a12"
+        assert move[1:].isdigit(), "Digits must follow the first character. Ex: a12"
+        assert (
+            ord(move[0]) - ord("a") < self.board_size
+        ), "The letter in 'move' must have value less than board size!"
+        assert (
+            0 < int(move[1:]) <= self.board_size
+        ), "Integer part of move must be within range (0, board_size]!"
+
+        column = int(move[1:]) - 1
+        row = ord(move[0]) - ord("a")
+        return row * self.board_size + column
